@@ -333,18 +333,29 @@
           <p><strong>${question.text}</strong></p>
           ${Object.entries(question.answers).map(([key, value]) => `
             <label>
-              <input type="radio" name="${qid}" value="${key}" onclick="
-                if (this.previousChecked) {
-                  this.checked = false;
-                }
-                document.querySelectorAll('input[name=${qid}]').forEach(el => el.previousChecked = false);
-                this.previousChecked = this.checked;
-              ">
+              <input type="radio" name="${qid}" value="${key}">
               <span>${value}</span>
             </label>
           `).join("")}
         `;
         form.appendChild(qBlock);
+      }
+
+      for (const input of form.querySelectorAll("input[type='radio']")) {
+        input.addEventListener("click", function () {
+          console.log("Radio clicked:", this.name, this.value, this.checked);
+          const qid = this.name;
+          const selected = this.checked ? this.value : null;
+          const sectionId = sectionKeys[currentSectionIndex];
+          if (!userAnswers[sectionId]) userAnswers[sectionId] = {};
+          if (userAnswers[sectionId][qid] === selected) {
+            this.checked = false;
+            userAnswers[sectionId][qid] = null;
+          } else {
+            userAnswers[sectionId][qid] = selected;
+          }
+          localStorage.setItem("quiz_" + quizId + "_answers", JSON.stringify(userAnswers));
+        });
       }
 
       document.getElementById("nextBtn").onclick = nextSection;
