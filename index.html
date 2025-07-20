@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SOS TESTER</title>
+
+  <style>
+    @font-face {
+      font-family: 'Argentum Sans';
+      src: url('./fonts/ArgentumSans-Regular.ttf') format('truetype');
+    }
+
+    body {
+      font-family: 'Argentum Sans', sans-serif;
+      background: #f9f9f9;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      background: #efdd61;
+      padding: 2em;
+      border-radius: 1em;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      width: 90%;
+      max-width: 500px;
+      text-align: center;
+      min-height: 300px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    h2 {
+      margin-bottom: 1em;
+      color: #333;
+      font-size: 1.5em;
+    }
+
+    button {
+      padding: 0.8em 1.2em;
+      font-size: 1em;
+      background-color: #d92d28;
+      color: white;
+      border: none;
+      border-radius: 0.5em;
+      cursor: pointer;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      align-self: center;
+      margin-top: 1em;
+    }
+
+    button:hover {
+      background-color: #b8211d;
+    }
+
+    #message {
+      margin-top: 1.5em;
+      font-size: 1.1em;
+      color: #222;
+    }
+
+    input[type="email"],
+    input[type="password"] {
+      padding: 0.8em;
+      font-size: 1em;
+      width: 90%;
+      border: 1px solid #333;
+      border-radius: 0.5em;
+      margin-bottom: 1em;
+      color: #333;
+      align-self: center;
+      background: white;
+      box-sizing: border-box;
+    }
+
+    input::placeholder {
+      color: #666;
+      opacity: 1;
+    }
+
+    input[type="radio"] {
+      accent-color: #d92d28;
+      transform: scale(1.2);
+      margin-right: 0.5em;
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      margin: 0.3em 0;
+      font-size: 1em;
+      cursor: pointer;
+      color: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>SOS Tester by UDULinkPoliba</h2>
+    <div id="message">Caricamento...</div>
+    <button id="startBtn" style="display:none" onclick="startQuiz()">Inizia Quiz</button>
+  </div>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+  <script>
+    // TODO: Inserisci qui la tua configurazione Firebase
+    const firebaseConfig = {
+      apiKey: "AIzaSyBXdCHN_fljuF9pc5E3tFGOunzhwgiNCJ0",
+      authDomain: "sostester-cb407.firebaseapp.com",
+      databaseURL: "https://sostester-cb407-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "sostester-cb407",
+      storageBucket: "sostester-cb407.appspot.com",
+      messagingSenderId: "1020915595902",
+      appId: "1:1020915595902:web:f8bc19257d9743b3fc362f",
+      measurementId: "G-RM8TDFRF9L"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    let currentUser = null;
+    const urlParams = new URLSearchParams(window.location.search);
+    const quizId = urlParams.get("id");
+    const isAdmin = urlParams.get("admin") === "true";
+
+    if (!quizId) {
+      document.getElementById("message").textContent = "Quiz ID mancante nell'URL.";
+      throw new Error("Quiz ID mancante");
+    }
+
+    if (isAdmin) {
+      renderAdminLogin();
+    } else {
+      firebase.auth().signInAnonymously()
+        .then(cred => {
+          currentUser = cred.user;
+          checkQuizEligibility();
+        })
+        .catch(err => {
+          document.getElementById("message").textContent = "Errore di autenticazione anonima.";
+          console.error(err);
+        });
+    }
+
+    function renderAdminLogin() {
+      const container = document.querySelector(".container");
+      container.innerHTML = `
+        <h2>Login Amministratore</h2>
+        <input id="adminEmail" type="email" placeholder="Email" />
+        <input id="adminPassword" type="password" placeholder="Password" />
+        <button onclick="adminLogin()">Login</button>
+        <div id="message"></div>
+      `;
+    }
+
+    function adminLogin() {
+      const email = document.getElementById("adminEmail").value;
+      const password = document.getElementById("adminPassword").value;
+
+      firebase.auth().signInWithEmailAndPassword(email, password)
+        .then(cred => {
+          currentUser = cred.user;
+          renderAdminPanel();
+        })
+        .catch(err => {
+          document.getElementById("message").textContent = "Credenziali non valide.";
+          console.error(err);
+        });
+    }
+
+    async function renderAdminPanel() {
+      const container = document.querySelector(".container");
+      container.innerHTML = "<h2>Riepilogo Risposte</h2><div id='adminResults'>Caricamento...</div>";
+      container.style.overflowY = "auto";
+      container.style.maxHeight = "90vh";
+
+      try {
+        const token = await currentUser.getIdToken();
+
+        const quizRes = await fetch(`https://us-central1-sostester-cb407.cloudfunctions.net/getQuizData?quizId=${quizId}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        const quizJson = await quizRes.json();
+        const quizQuestions = quizJson.sections || {};
+
+        const res = await fetch(`https://us-central1-sostester-cb407.cloudfunctions.net/getAggregatedAnswers?quizId=${quizId}`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          document.getElementById("adminResults").textContent = data.error || "Errore nel recupero dei dati.";
+          return;
+        }
+
+        const results = Object.entries(data).map(([sectionId, sectionData]) => {
+          const allQuestionIds = Object.keys(quizQuestions[sectionId]?.questions || {});
+          const questions = allQuestionIds.map(qid => {
+            const questionText = quizQuestions[sectionId].questions[qid]?.text || qid;
+            const qData = sectionData[qid] || {};
+            const correct = qData.correct || "";
+            const total = Object.entries(qData).filter(([k]) => k !== "correct").reduce((sum, [_, val]) => sum + val, 0);
+
+            const allOptions = Object.keys(quizQuestions[sectionId].questions[qid].answers || {});
+            const bars = allOptions.map(opt => {
+              const count = qData[opt] || 0;
+              const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+              return `
+                <div style="margin-bottom: 0.5em;">
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>${opt}${opt === correct ? " ✅" : ""}</span>
+                    <span>${count} risp. (${percent}%)</span>
+                  </div>
+                  <div style="background: #ddd; border-radius: 4px; overflow: hidden; height: 16px;">
+                    <div style="background: ${opt === correct ? '#4caf50' : '#d92d28'}; width: ${percent}%; height: 100%;"></div>
+                  </div>
+                </div>
+              `;
+            }).join("");
+
+            const sectionIdEncoded = encodeURIComponent(sectionId);
+            const qidEncoded = encodeURIComponent(qid);
+
+            return `
+              <div style="padding:1em; border:1px solid #ccc; margin-bottom:1em; border-radius:8px; background:#fff;">
+                <strong>${qid}: ${questionText}</strong><br>
+                <button onclick="document.getElementById('data-${sectionIdEncoded}-${qidEncoded}').style.display = 'block'; this.remove()">Clicca per rivelare</button>
+                <div id="data-${sectionIdEncoded}-${qidEncoded}" style="display:none; margin-top:1em;">${bars}</div>
+              </div>
+            `;
+          });
+          return `<h3>${sectionId}</h3>${questions.join("")}`;
+        }).join("");
+
+        document.getElementById("adminResults").innerHTML = results || "Nessun dato aggregato disponibile.";
+      } catch (err) {
+        console.error("Errore nel fetch admin:", err);
+        document.getElementById("adminResults").textContent = "Errore interno.";
+      }
+    }
+
+    async function checkQuizEligibility() {
+      try {
+        const token = await currentUser.getIdToken();
+        const res = await fetch(`https://us-central1-sostester-cb407.cloudfunctions.net/getQuizData?quizId=${quizId}`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          document.getElementById("message").textContent = data.error || "Errore durante il caricamento del quiz.";
+          return;
+        }
+
+        quizData = data;
+        sectionKeys = Object.keys(quizData.sections);
+        document.getElementById("message").textContent = "Quiz pronto. Clicca sotto per iniziare!";
+        document.getElementById("startBtn").style.display = "block";
+      } catch (err) {
+        console.error(err);
+        document.getElementById("message").textContent = "Errore nel recupero del quiz.";
+      }
+    }
+
+    let quizData = null;
+    let currentSectionIndex = 0;
+    let sectionKeys = [];
+    let timerInterval = null;
+    let remainingTime = 0;
+    const userAnswers = {};
+
+    function saveAnswersToLocal() {
+      localStorage.setItem(`quiz-${quizId}-answers`, JSON.stringify({
+        currentSectionIndex,
+        userAnswers
+      }));
+    }
+
+    function loadAnswersFromLocal() {
+      const saved = localStorage.getItem(`quiz-${quizId}-answers`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.userAnswers) {
+            currentSectionIndex = parsed.currentSectionIndex || 0;
+            Object.assign(userAnswers, parsed.userAnswers);
+          }
+        } catch (e) {
+          console.warn("Dati locali corrotti, ignorati.");
+        }
+      }
+    }
+
+    document.getElementById("startBtn").addEventListener("click", startQuiz);
+
+    function startQuiz() {
+      document.getElementById("startBtn").style.display = "none";
+      loadAnswersFromLocal();
+      renderSection();
+    }
+
+    function renderSection() {
+      const sectionId = sectionKeys[currentSectionIndex];
+      const section = quizData.sections[sectionId];
+      const container = document.querySelector(".container");
+      container.innerHTML = `
+        <h2>${sectionId}</h2>
+        <div id="timer">Tempo rimasto: <span id="time">0</span>s</div>
+        <form id="quizForm"></form>
+        <button id="nextBtn">Avanti</button>
+      `;
+
+      const form = document.getElementById("quizForm");
+      for (const [qid, question] of Object.entries(section.questions)) {
+        const qBlock = document.createElement("div");
+        qBlock.innerHTML = `
+          <p><strong>${question.text}</strong></p>
+          ${Object.entries(question.answers).map(([key, value]) => `
+            <label><input type="radio" name="${qid}" value="${key}"> <span>${value}</span></label>
+          `).join("")}
+        `;
+        form.appendChild(qBlock);
+      }
+
+      document.getElementById("nextBtn").onclick = nextSection;
+
+      remainingTime = section.timeLimit;
+      updateTimerDisplay();
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        remainingTime--;
+        updateTimerDisplay();
+        if (remainingTime <= 0) {
+          clearInterval(timerInterval);
+          nextSection();
+        }
+      }, 1000);
+    }
+
+    function updateTimerDisplay() {
+      const timeEl = document.getElementById("time");
+      if (timeEl) {
+        if (remainingTime > 60) {
+          const mins = Math.floor(remainingTime / 60);
+          const secs = remainingTime % 60;
+          timeEl.textContent = `${mins}m ${secs}`;
+        } else {
+          timeEl.textContent = `${remainingTime}`;
+        }
+      }
+    }
+
+    function nextSection() {
+      saveCurrentAnswers();
+      currentSectionIndex++;
+      if (currentSectionIndex < sectionKeys.length) {
+        renderSection();
+      } else {
+        submitQuiz();
+      }
+    }
+
+    function saveCurrentAnswers() {
+      const sectionId = sectionKeys[currentSectionIndex];
+      const form = document.getElementById("quizForm");
+      const inputs = form.querySelectorAll("input[type=radio]");
+      userAnswers[sectionId] = {};
+
+      const answered = new Set();
+      for (const input of inputs) {
+        if (input.checked) {
+          userAnswers[sectionId][input.name] = input.value;
+          answered.add(input.name);
+        }
+      }
+
+      // per ogni domanda non risolta, lasciala vuota
+      const allNames = Array.from(new Set([...inputs].map(i => i.name)));
+      for (const name of allNames) {
+        if (!answered.has(name)) {
+          userAnswers[sectionId][name] = "";
+        }
+      }
+      saveAnswersToLocal();
+    }
+
+    async function submitQuiz() {
+      try {
+        const token = await currentUser.getIdToken();
+        const response = await fetch("https://us-central1-sostester-cb407.cloudfunctions.net/submitQuizResponse", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            quizId: quizId,
+            answers: userAnswers
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) throw new Error(result.error || "Errore durante l'invio del quiz");
+
+        document.querySelector(".container").innerHTML = `
+          <h2>Grazie per aver completato il quiz!</h2>
+          <p>Punteggio: <strong>${result.score}</strong> su <strong>${result.maxScore}</strong></p>
+        `;
+      } catch (err) {
+        console.error("Submit error:", err);
+        document.querySelector(".container").innerHTML = "<h2>Errore durante l'invio del quiz. Riprova più tardi.</h2>";
+      }
+    }
+  </script>
+</body>
+
+</html>
