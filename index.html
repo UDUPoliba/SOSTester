@@ -240,7 +240,6 @@
             const bars = allOptions.map(opt => {
               const count = qData[opt] || 0;
               const percent = total > 0 ? Math.round((count / total) * 100) : 0;
-              console.log(opt+ " " + correct);
               return `
                 <div style="margin-bottom: 0.5em;">
                   <div style="display: flex; justify-content: space-between;">
