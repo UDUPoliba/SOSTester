@@ -291,9 +291,16 @@
         }
 
         quizData = data;
+        // --- singleTimer support ---
+        const isSingleTimer = !!quizData.singleTimer;
+        let globalTimeLimit = quizData.timeLimit || 0;
+        // --- fine singleTimer support ---
         sectionKeys = Object.keys(quizData.sections);
         document.getElementById("message").textContent = quizData.title;
         document.getElementById("startBtn").style.display = "block";
+        // Salva variabili globali per singleTimer
+        window.isSingleTimer = isSingleTimer;
+        window.globalTimeLimit = globalTimeLimit;
       } catch (err) {
         console.error(err);
         document.getElementById("message").textContent = "Errore nel recupero del quiz.";
@@ -306,34 +313,76 @@
     let timerInterval = null;
     let remainingTime = 0;
     const userAnswers = {};
+    // singleTimer vars
+    window.isSingleTimer = false;
+    window.globalTimeLimit = 0;
 
     document.getElementById("startBtn").addEventListener("click", startQuiz);
 
     function startQuiz() {
+      // singleTimer: imposta tempo globale e avvia timer globale
+      if (window.isSingleTimer) {
+        remainingTime = window.globalTimeLimit;
+        startGlobalTimer();
+      }
       renderSection();
+    }
+
+    // Funzione per il timer globale singleTimer
+    function startGlobalTimer() {
+      updateTimerDisplay();
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        remainingTime--;
+        updateTimerDisplay();
+        if (remainingTime <= 0) {
+          clearInterval(timerInterval);
+          submitQuiz();
+        }
+      }, 1000);
     }
 
     function renderSection() {
       const sectionId = sectionKeys[currentSectionIndex];
       const section = quizData.sections[sectionId];
+      // Points logic
+      const pointsCorrect = (section.hasOwnProperty('pointsCorrect') ? section.pointsCorrect : quizData.pointsCorrect);
+      const pointsWrong = (section.hasOwnProperty('pointsWrong') ? section.pointsWrong : quizData.pointsWrong);
+      const pointsEmpty = (section.hasOwnProperty('pointsEmpty') ? section.pointsEmpty : quizData.pointsEmpty);
+
+      const numQuestions = Object.keys(section.questions).length;
+      const maxSectionScore = numQuestions * pointsCorrect;
+
+      const isSingleTimer = window.isSingleTimer;
+
       const container = document.querySelector(".container");
       container.innerHTML = `
         <h2 style="text-align: left;">${section.text}</h2>
         <div id="timer" style="text-align: left;">Tempo rimasto: <span id="time">0</span>s</div>
+        <div style="text-align: left; margin-top: 0.5em; font-size: 0.9em; color: #333;">
+
+          Risposta corretta: ${pointsCorrect} punti<br>
+          Risposta errata: ${pointsWrong} punti<br>
+          Nessuna risposta: ${pointsEmpty} punti<br>
+          Punteggio massimo in questa sezione: ${maxSectionScore} punti
+        </div>
         <form id="quizForm" style="text-align: left;"></form>
         <div style="text-align: left;">
+          ${isSingleTimer && currentSectionIndex > 0 ? '<button id="prevBtn">Indietro</button>' : ''}
           <button id="nextBtn">${currentSectionIndex === sectionKeys.length - 1 ? 'Invia' : 'Avanti'}</button>
         </div>
       `;
 
       const form = document.getElementById("quizForm");
+      // Retrieve saved answers for this section
+      const sectionAnswers = userAnswers[sectionId] || {};
       for (const [qid, question] of Object.entries(section.questions)) {
         const qBlock = document.createElement("div");
         qBlock.innerHTML = `
           <p><strong>${question.text}</strong></p>
           ${Object.entries(question.answers).map(([key, value]) => `
             <label>
-              <input type="radio" name="${qid}" value="${key}">
+              <input type="radio" name="${qid}" value="${key}" ${sectionAnswers[qid] === key ? "checked" : ""}>
               <span>${value}</span>
             </label>
           `).join("")}
@@ -358,19 +407,35 @@
         });
       }
 
+      // Pulsanti avanti/indietro
       document.getElementById("nextBtn").onclick = nextSection;
+      if (isSingleTimer && currentSectionIndex > 0) {
+        document.getElementById("prevBtn").onclick = previousSection;
+      }
 
-      remainingTime = section.timeLimit;
-      updateTimerDisplay();
-      clearInterval(timerInterval);
-      timerInterval = setInterval(() => {
-        remainingTime--;
+      // Timer
+      if (!isSingleTimer) {
+        remainingTime = section.timeLimit;
         updateTimerDisplay();
-        if (remainingTime <= 0) {
-          clearInterval(timerInterval);
-          nextSection();
-        }
-      }, 1000);
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+          remainingTime--;
+          updateTimerDisplay();
+          if (remainingTime <= 0) {
+            clearInterval(timerInterval);
+            nextSection();
+          }
+        }, 1000);
+      } else {
+        updateTimerDisplay();
+      }
+    }
+
+    function previousSection() {
+      if (currentSectionIndex > 0) {
+        currentSectionIndex--;
+        renderSection();
+      }
     }
 
     function updateTimerDisplay() {
@@ -397,6 +462,7 @@
 
     async function submitQuiz() {
       document.getElementById("nextBtn")?.remove();
+      document.getElementById("prevBtn")?.remove();
       try {
         const token = await currentUser.getIdToken();
         const response = await fetch("https://us-central1-sostester-cb407.cloudfunctions.net/submitQuizResponse", {
@@ -417,7 +483,7 @@
 
         document.querySelector(".container").innerHTML = `
           <h2>Grazie per aver completato il quiz!</h2>
-          <p>Punteggio: <strong>${result.score}</strong> su <strong>${result.maxScore}</strong></p>
+          <p>Punteggio: <strong>${result.score.toFixed(2)}</strong> su <strong>${result.maxScore.toFixed(2)}</strong></p>
         `;
       } catch (err) {
         console.error("Submit error:", err);
