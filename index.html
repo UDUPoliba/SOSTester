@@ -328,12 +328,13 @@
         });
         const data = await res.json();
 
-        if (!res.ok) {
+        if (!res.ok && (!data.error || data.error != "chill")) {
           document.getElementById("message").textContent = data.error || "Errore durante il caricamento del quiz.";
           return;
         }
 
         quizData = data;
+        if (res.ok){
         // --- singleTimer support ---
         const isSingleTimer = !!quizData.singleTimer;
         let globalTimeLimit = quizData.timeLimit || 0;
@@ -344,9 +345,138 @@
         // Salva variabili globali per singleTimer
         window.isSingleTimer = isSingleTimer;
         window.globalTimeLimit = globalTimeLimit;
+        } else {
+        // Se il quiz è chill, proviamo a ottenere i risultati: se 200 => già completato, se 403 => non completato.
+          try {
+            const probeResp = await fetch(`https://us-central1-sostester-cb407.cloudfunctions.net/getChillResults?quizId=${encodeURIComponent(quizId)}`, {
+              method: "GET",
+              headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (probeResp.ok) {
+              // Utente ha già completato: mostra UI chill (riprova / vedi risultati)
+              renderChillCompletedUI();
+              return; // interrompi il normale rendering della start UI
+            }
+            // 403 significa nessun tentativo: prosegui col flusso normale
+          } catch (e) {
+            console.warn("Probe chillResults fallita (verifica completamento). Procedo normalmente.", e);
+          }
+        }
       } catch (err) {
         console.error(err);
         document.getElementById("message").textContent = "Errore nel recupero del quiz.";
+      }
+    }
+
+    function renderChillCompletedUI() {
+      const container = document.querySelector(".container");
+      container.innerHTML = `
+        <h2>${quizData.title}</h2>
+        <div id="message">Hai già completato questa prova (modalità chill attiva).</div>
+        <div style="display:flex; gap: 0.8em; justify-content:center; flex-wrap: wrap; margin-top: 1em;">
+          <button id="retryChillBtn">Riprova</button>
+          <button id="viewChillBtn" style="background:#333;">Vedi risultati</button>
+        </div>
+      `;
+      document.getElementById("retryChillBtn").addEventListener("click", retryChill);
+      document.getElementById("viewChillBtn").addEventListener("click", viewChillResults);
+    }
+
+    async function retryChill() {
+      try {
+        const token = await currentUser.getIdToken();
+        const resp = await fetch("https://us-central1-sostester-cb407.cloudfunctions.net/resetChillAttempt", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ quizId })
+        });
+        const json = await resp.json();
+        if (!resp.ok) throw new Error(json.error || "Errore reset");
+        // Reset riuscito: mostra il tasto start
+        const container = document.querySelector(".container");
+        container.innerHTML = `
+          <h2>${quizData.title}</h2>
+          <div id="message">${json.message || "Puoi riprovare il quiz."}</div>
+          <button id="startBtn">Inizia Quiz</button>
+        `;
+        document.getElementById("startBtn").addEventListener("click", startQuiz);
+      } catch (err) {
+        console.error("retryChill error:", err);
+        const container = document.querySelector(".container");
+        container.innerHTML = `
+          <h2>${quizData.title}</h2>
+          <div id="message" style="color:#b8211d;">${err.message || "Errore durante il reset del tentativo."}</div>
+        `;
+      }
+    }
+
+    async function viewChillResults() {
+      try {
+        const token = await currentUser.getIdToken();
+        const resp = await fetch(`https://us-central1-sostester-cb407.cloudfunctions.net/getChillResults?quizId=${encodeURIComponent(quizId)}`, {
+          method: "GET",
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        const json = await resp.json();
+        if (!resp.ok) throw new Error(json.error || "Errore nel recupero dei risultati");
+
+        // Render dei risultati
+        const container = document.querySelector(".container");
+        const parts = [];
+        parts.push(`<h2>Risultati — ${quizData.title}</h2>`);
+        parts.push(`<div style="margin-bottom:0.5em;">Punteggio totale: <strong>${Number(json.score).toFixed(2)}</strong> / <strong>${Number(json.maxScore).toFixed(2)}</strong></div>`);
+
+        // per sezione
+        for (const sectionId of Object.keys(quizData.sections || {})) {
+          const secDef = quizData.sections[sectionId];
+          const secRes = json.sections?.[sectionId];
+          if (!secRes) continue;
+
+          parts.push(`<div style="text-align:left; padding:0.75em; background:#fff; border:1px solid #ddd; border-radius:8px; margin:0.6em 0;">
+            <h3 style="margin:0 0 0.4em 0;">${secDef.text || sectionId}</h3>
+            <div style="margin:0.2em 0 0.8em 0;">Punteggio sezione: <strong>${Number(secRes.score).toFixed(2)}</strong> / <strong>${Number(secRes.maxScore).toFixed(2)}</strong></div>
+          `);
+
+          // domande
+          const qids = Object.keys(secRes.questions || {});
+          qids.sort();
+          for (const qid of qids) {
+            const qRes = secRes.questions[qid];
+            const qDef = secDef.questions[qid] || {};
+            const isFill = Array.isArray(qRes.correct);
+            const userVal = qRes.user == null ? "<i>(vuoto)</i>" : (isFill ? String(qRes.user || "") : qRes.user);
+            const correctVal = isFill ? (qRes.correct || []).join(", ") : qRes.correct;
+            const icon = qRes.isCorrect ? "✅" : (qRes.user == null || String(qRes.user).trim() === "" ? "⬜️" : "❌");
+
+            parts.push(`
+              <div style="border-top:1px dashed #ccc; padding:0.5em 0;">
+                <div style="margin-bottom:0.2em;"><strong>${qDef.text || qid}</strong> <span style="font-size:0.9em; color:#555;">[${isFill ? "fill_blank" : "mcq"}]</span> ${icon}</div>
+                <div style="font-size:0.95em; color:#222;">
+                  <div><em>Tua risposta:</em> ${userVal}</div>
+                  <div><em>Corretta:</em> ${correctVal}</div>
+                </div>
+              </div>
+            `);
+          }
+          parts.push(`</div>`);
+        }
+
+        // bottone per tornare
+        parts.push(`<div style="text-align:center; margin-top:0.8em;"><button id="backBtn">Indietro</button></div>`);
+        container.innerHTML = parts.join("");
+        document.getElementById("backBtn").addEventListener("click", renderChillCompletedUI);
+      } catch (err) {
+        console.error("viewChillResults error:", err);
+        const container = document.querySelector(".container");
+        container.innerHTML = `
+          <h2>${quizData.title}</h2>
+          <div id="message" style="color:#b8211d;">${err.message || "Errore durante il caricamento dei risultati."}</div>
+          <div style="margin-top:0.8em;"><button id="backBtn">Indietro</button></div>
+        `;
+        document.getElementById("backBtn").addEventListener("click", renderChillCompletedUI);
       }
     }
 
