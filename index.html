@@ -82,7 +82,8 @@
     }
 
     input[type="email"],
-    input[type="password"] {
+    input[type="password"],
+    input[type="text"] {
       padding: 0.8em;
       font-size: 1em;
       width: 90%;
@@ -377,15 +378,22 @@
       const sectionAnswers = userAnswers[sectionId] || {};
       for (const [qid, question] of Object.entries(section.questions)) {
         const qBlock = document.createElement("div");
-        qBlock.innerHTML = `
-          <p><strong>${question.text}</strong></p>
-          ${Object.entries(question.answers).map(([key, value]) => `
+        let inner = `<p><strong>${question.text || qid}</strong></p>`;
+        if (question.type === "fill_blank") {
+          const saved = (sectionAnswers[qid] ?? "");
+          inner += `
+            <input type="text" name="${qid}" data-type="fill_blank" placeholder="Inserisci la risposta" value="${saved !== null && saved !== undefined ? String(saved) : ""}">
+          `;
+        } else {
+          const answers = Object.entries(question.answers || {});
+          inner += answers.map(([key, value]) => `
             <label>
               <input type="radio" name="${qid}" value="${key}" ${sectionAnswers[qid] === key ? "checked" : ""}>
               <span>${value}</span>
             </label>
-          `).join("")}
-        `;
+          `).join("");
+        }
+        qBlock.innerHTML = inner;
         form.appendChild(qBlock);
       }
 
@@ -402,6 +410,17 @@
           } else {
             userAnswers[sectionId][qid] = selected;
           }
+          localStorage.setItem("quiz_" + quizId + "_answers", JSON.stringify(userAnswers));
+        });
+      }
+      // Save fill_blank inputs as plain strings
+      for (const input of form.querySelectorAll("input[data-type='fill_blank']")) {
+        input.addEventListener("input", function () {
+          const qid = this.name;
+          const val = this.value.trim();
+          const sectionId = sectionKeys[currentSectionIndex];
+          if (!userAnswers[sectionId]) userAnswers[sectionId] = {};
+          userAnswers[sectionId][qid] = val;
           localStorage.setItem("quiz_" + quizId + "_answers", JSON.stringify(userAnswers));
         });
       }
