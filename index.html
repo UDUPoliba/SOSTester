@@ -235,24 +235,67 @@
             const questionText = question.text || qid;
             const qData = sectionData[qid] || {};
             const correct = qData.correct || "";
-            const total = Object.entries(qData).filter(([k]) => k !== "correct").reduce((sum, [_, val]) => sum + val, 0);
+            const total = Object.entries(qData)
+              .filter(([k]) => k !== "correct" && k !== "_meta")
+              .reduce((sum, [_, val]) => sum + val, 0);
 
-            const allOptions = Object.keys(question.answers || {});
-            const bars = allOptions.map(opt => {
-              const count = qData[opt] || 0;
-              const percent = total > 0 ? Math.round((count / total) * 100) : 0;
-              return `
-                <div style="margin-bottom: 0.5em;">
-                  <div style="display: flex; justify-content: space-between;">
-                    <span>${opt}${opt === correct ? " ✅" : ""}</span>
-                    <span>${count} (${percent}%)</span>
+            const isFill = Array.isArray(correct);
+            let bars = "";
+            if (!isFill) {
+              // MCQ: usa le opzioni definite nel quiz
+              const allOptions = Object.keys(question.answers || {});
+              bars = allOptions.map(opt => {
+                const count = qData[opt] || 0;
+                const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+                const isCorrect = opt === correct;
+                return `
+                  <div style="margin-bottom: 0.5em;">
+                    <div style="display: flex; justify-content: space-between;">
+                      <span>${opt}${isCorrect ? " ✅" : ""}</span>
+                      <span>${count} (${percent}%)</span>
+                    </div>
+                    <div style="background: #ddd; border-radius: 4px; overflow: hidden; height: 16px;">
+                      <div style="background: ${isCorrect ? '#4caf50' : '#d92d28'}; width: ${percent}%; height: 100%;"></div>
+                    </div>
                   </div>
-                  <div style="background: #ddd; border-radius: 4px; overflow: hidden; height: 16px;">
-                    <div style="background: ${opt === correct ? '#4caf50' : '#d92d28'}; width: ${percent}%; height: 100%;"></div>
+                `;
+              }).join("");
+            } else {
+              // FILL BLANK: mostra i bucket raccolti (normalizzati) con flag di correttezza
+              const entries = Object.entries(qData)
+                .filter(([k]) => k !== "correct" && k !== "_meta");
+              // ordina per conteggio
+              entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
+              const top = entries.slice(0, 10); // mostra i primi 10
+              const rest = entries.slice(10);
+              const restSum = rest.reduce((s, [, v]) => s + (v || 0), 0);
+              const makeRow = (key, count) => {
+                const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+                const isCorrectBucket = qData._meta && qData._meta[key] === true;
+                return `
+                  <div style="margin-bottom: 0.5em;">
+                    <div style="display: flex; justify-content: space-between;">
+                      <span>${key || "<vuoto>"}${isCorrectBucket ? " ✅" : ""}</span>
+                      <span>${count} (${percent}%)</span>
+                    </div>
+                    <div style="background: #ddd; border-radius: 4px; overflow: hidden; height: 16px;">
+                      <div style="background: ${isCorrectBucket ? '#4caf50' : '#d92d28'}; width: ${percent}%; height: 100%;"></div>
+                    </div>
                   </div>
+                `;
+              };
+              bars = top.map(([k, v]) => makeRow(k, v)).join("");
+              if (restSum > 0) {
+                bars += makeRow("Altri", restSum);
+              }
+              // elenco soluzioni attese (mostra forma originale)
+              const correctList = Array.isArray(correct) ? correct.join(", ") : "";
+              bars = `
+                <div style="padding: 0.5em; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 6px; margin-bottom: 0.8em;">
+                  <div><strong>Soluzioni accettate:</strong> ${correctList || "-"}</div>
                 </div>
-              `;
-            }).join("");
+              ` + bars;
+            }
 
             const sectionIdEncoded = encodeURIComponent(sectionId);
             const qidEncoded = encodeURIComponent(qid);
