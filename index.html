@@ -115,6 +115,67 @@
       cursor: pointer;
       color: #333;
     }
+
+    .admin-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1em;
+      padding: 0.8em;
+      margin-bottom: 1em;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+      text-align: left;
+    }
+
+    .admin-switch {
+      position: relative;
+      display: inline-block;
+      width: 52px;
+      height: 28px;
+      flex: 0 0 auto;
+    }
+
+    .admin-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .admin-slider {
+      position: absolute;
+      inset: 0;
+      cursor: pointer;
+      background: #999;
+      border-radius: 28px;
+      transition: 0.2s;
+    }
+
+    .admin-slider::before {
+      content: "";
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      left: 3px;
+      bottom: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+
+    .admin-switch input:checked + .admin-slider {
+      background: #4caf50;
+    }
+
+    .admin-switch input:checked + .admin-slider::before {
+      transform: translateX(24px);
+    }
+
+    .admin-switch input:disabled + .admin-slider {
+      cursor: wait;
+      opacity: 0.6;
+    }
   </style>
 </head>
 
@@ -214,7 +275,20 @@
 
     async function renderAdminPanel() {
       const container = document.querySelector(".container");
-      container.innerHTML = "<h2>Riepilogo Risposte</h2><div id='adminResults'>Caricamento...</div>";
+      container.innerHTML = `
+        <h2>Riepilogo Risposte</h2>
+        <div class="admin-toggle-row">
+          <div>
+            <strong>Accetta risposte</strong>
+            <div id="quizOpenStatus" style="font-size:0.9em; color:#555;">Caricamento...</div>
+          </div>
+          <label class="admin-switch" aria-label="Apri o chiudi il quiz">
+            <input id="quizOpenToggle" type="checkbox" disabled>
+            <span class="admin-slider"></span>
+          </label>
+        </div>
+        <div id="adminResults">Caricamento...</div>
+      `;
       container.style.overflowY = "auto";
       container.style.maxHeight = "90vh";
 
@@ -226,6 +300,12 @@
         });
         const quizJson = await quizRes.json();
         const quizQuestions = quizJson.sections || {};
+        const quizOpenToggle = document.getElementById("quizOpenToggle");
+        const quizOpenStatus = document.getElementById("quizOpenStatus");
+        quizOpenToggle.checked = quizRes.ok && quizJson.isOpen === true;
+        quizOpenToggle.disabled = false;
+        quizOpenStatus.textContent = quizOpenToggle.checked ? "Quiz aperto" : "Quiz chiuso";
+        quizOpenToggle.addEventListener("change", () => setQuizOpen(quizOpenToggle.checked));
 
         const res = await fetch(`https://us-central1-sostester-cb407.cloudfunctions.net/getAggregatedAnswers?quizId=${quizId}`, {
           headers: {
@@ -328,6 +408,39 @@
       } catch (err) {
         console.error("Errore nel fetch admin:", err);
         document.getElementById("adminResults").textContent = "Errore interno.";
+      }
+    }
+
+    async function setQuizOpen(isOpen) {
+      const toggle = document.getElementById("quizOpenToggle");
+      const status = document.getElementById("quizOpenStatus");
+      const previousValue = !isOpen;
+      toggle.disabled = true;
+      status.textContent = "Salvataggio...";
+
+      try {
+        const token = await currentUser.getIdToken();
+        const response = await fetch("https://us-central1-sostester-cb407.cloudfunctions.net/setQuizOpen", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ quizId, isOpen })
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "Errore durante l'aggiornamento del quiz");
+        }
+
+        toggle.checked = result.isOpen;
+        status.textContent = result.isOpen ? "Quiz aperto" : "Quiz chiuso";
+      } catch (err) {
+        console.error("setQuizOpen error:", err);
+        toggle.checked = previousValue;
+        status.textContent = `Errore: ${err.message}`;
+      } finally {
+        toggle.disabled = false;
       }
     }
 
