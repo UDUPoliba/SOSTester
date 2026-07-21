@@ -133,6 +133,19 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
   <script>
+    // Escape dynamic Firebase values before inserting them through innerHTML.
+    // This preserves mathematical comparisons such as "1/e<x<√e" and
+    // prevents user-controlled strings from being interpreted as HTML.
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      })[char]);
+    }
+
     // TODO: Inserisci qui la tua configurazione Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyBXdCHN_fljuF9pc5E3tFGOunzhwgiNCJ0",
@@ -551,7 +564,7 @@
       const sectionAnswers = userAnswers[sectionId] || {};
       for (const [qid, question] of Object.entries(section.questions)) {
         const qBlock = document.createElement("div");
-        let inner = `<p><strong>${question.text || qid}</strong></p>`;
+        let inner = `<p><strong>${escapeHtml(question.text || qid)}</strong></p>`;
         if (question.type === "fill_blank") {
           const saved = (sectionAnswers[qid] ?? "");
           inner += `
@@ -562,7 +575,7 @@
           inner += answers.map(([key, value]) => `
             <label>
               <input type="radio" name="${qid}" value="${key}" ${sectionAnswers[qid] === key ? "checked" : ""}>
-              <span>${value}</span>
+              <span>${escapeHtml(value)}</span>
             </label>
           `).join("");
         }
